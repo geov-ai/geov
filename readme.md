@@ -1,5 +1,7 @@
 # GeoV
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/geov-ai/geov/blob/master/notebooks/generate.ipynb)
+
 ## Overview
 
 The GeoV model was designed by Georges Harik and uses 
@@ -31,6 +33,8 @@ pip install geov
 ```
 
 ## Generation
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/geov-ai/geov/blob/master/notebooks/generate.ipynb)
 
 ```python
 from geov import GeoVForCausalLM, GeoVTokenizer
