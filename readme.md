@@ -20,7 +20,9 @@ digits and new line characters separately, in order to achieve better performanc
 This model was contributed by [gharik](https://huggingface.co/gharik) and [vpj](https://huggingface.co/vpj).
 
 We have shared 9B parameter pre-trained model at [GeoV/GeoV-9b](https://huggingface.co/GeoV/GeoV-9b),
-We plan to release checkpoints around every 20b tokens trained from here until around 300b tokens.
+The released weights were trained on ~70 billion tokens.
+We plan to continue training up to 300 billion tokens and update the weights at every 20b tokens.
+This training run is monolingual and uses c4en and english wikipedia datasets.
 We will also train smaller and larger versions.
 Our aim is to have broadly available smaller and larger models.
 
