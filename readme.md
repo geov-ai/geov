@@ -9,8 +9,7 @@ by [Georges Hark](https://twitter.com/ghark) and [Varuna Jayasiri](https://twitt
 [RoPER](http://research.labml.ai/RoPER.html), in addition to using relative positions in the attention score
 calculation by RoPE embeddings, adds relative positional information explicitly to value embeddings. 
 Specifically, it incorporates the relative positions of the tokens paid attention to.
-RoPER gives better performance in algorithmic tasks.
-Results have shown an improvement over RoPE in a language modeling setting on a 3 billion parameter transformer.
+RoPER has given better performance in some algorithmic tasks, and seems comparable to RoPE in language modeling.
 
 The GeoV tokenizer uses [SentencePiece](https://github.com/google/sentencepiece)
 [unigram language model](https://arxiv.org/abs/1804.10959) and tokenizes symbols,
