@@ -28,7 +28,7 @@ Our aim is to have broadly available smaller and larger models.
 
 This implementation is built on top of [transformers](https://github.com/huggingface/transformers) library.
 
-## Installations
+## Installation
 
 ```shell
 pip install geov
