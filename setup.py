@@ -5,7 +5,7 @@ with open("readme.md", "r") as f:
 
 setuptools.setup(
     name='geov',
-    version='0.0.1',
+    version='0.0.2',
     author="Better Planet Investments and labml.ai",
     author_email="contact@labml.ai",
     description="The GeoV model is a large langauge model designed by Georges Harik and uses Rotary Positional Embeddings with Relative distances (RoPER). We have shared a pretrained 9B parameter model.",
