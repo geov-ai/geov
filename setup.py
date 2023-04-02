@@ -8,7 +8,7 @@ setuptools.setup(
     version='0.0.2',
     author="Better Planet Investments and labml.ai",
     author_email="contact@labml.ai",
-    description="The GeoV model is a large langauge model designed by Georges Harik and uses Rotary Positional Embeddings with Relative distances (RoPER). We have shared a pretrained 9B parameter model.",
+    description="The GeoV model is a large language model designed by Georges Harik and uses Rotary Positional Embeddings with Relative distances (RoPER). We have shared a pretrained 9B parameter model.",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/geov-ai/geov",
