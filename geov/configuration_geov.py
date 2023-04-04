@@ -13,10 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """ GeoV model configuration"""
-
+from geov import GeoVTokenizer
 from transformers.configuration_utils import PretrainedConfig
 from transformers.utils import logging
-
 
 logger = logging.get_logger(__name__)
 
@@ -75,23 +74,24 @@ class GeoVConfig(PretrainedConfig):
     >>> configuration = model.config  # doctest: +SKIP
     ```"""
     model_type = "geov"
+    tokenizer_class = GeoVTokenizer
 
     def __init__(
-        self,
-        vocab_size=65_536,
-        hidden_size=5_120,
-        num_hidden_layers=32,
-        num_attention_heads=40,
-        intermediate_size=1024 * 5 * 4,
-        layer_norm_eps=1e-4,
-        rotary_emb_base=10000,
-        max_position_embeddings=2048,
-        use_extra_biases_ffn=False,
-        use_cache=True,
-        bos_token_id=0,
-        eos_token_id=2,
-        tie_word_embeddings=False,
-        **kwargs,
+            self,
+            vocab_size=65_536,
+            hidden_size=5_120,
+            num_hidden_layers=32,
+            num_attention_heads=40,
+            intermediate_size=1024 * 5 * 4,
+            layer_norm_eps=1e-4,
+            rotary_emb_base=10000,
+            max_position_embeddings=2048,
+            use_extra_biases_ffn=False,
+            use_cache=True,
+            bos_token_id=0,
+            eos_token_id=2,
+            tie_word_embeddings=False,
+            **kwargs,
     ):
         super().__init__(
             bos_token_id=bos_token_id, eos_token_id=eos_token_id, tie_word_embeddings=tie_word_embeddings, **kwargs
