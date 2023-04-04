@@ -13,6 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .config import GeoVConfig
-from .model import GeoVModel, GeoVForCausalLM
-from .tokenizer import GeoVTokenizer
+from .configuration_geov import GeoVConfig
+from .modeling_geov import GeoVModel, GeoVForCausalLM
+from .tokenization_geov import GeoVTokenizer

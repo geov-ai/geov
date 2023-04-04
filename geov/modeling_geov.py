@@ -22,7 +22,6 @@ import torch.utils.checkpoint
 from torch import nn
 from torch.nn import CrossEntropyLoss
 
-from .config import GeoVConfig
 from transformers.file_utils import (
     add_code_sample_docstrings,
     add_start_docstrings,
@@ -32,11 +31,12 @@ from transformers.file_utils import (
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 from transformers.modeling_utils import PreTrainedModel
 from transformers.utils import logging
+from .configuration_geov import GeoVConfig
 
 logger = logging.get_logger(__name__)
 
 _CHECKPOINT_FOR_DOC = "GeoV/GeoV-9b"
-_REAL_CHECKPOINT_FOR_DOC = "EleutherAI/gpt-neox-20b"
+_REAL_CHECKPOINT_FOR_DOC = "GeoV/GeoV-9b"
 _CONFIG_FOR_DOC = "GeoVConfig"
 
 GEOV_PRETRAINED_MODEL_ARCHIVE_LIST = [
@@ -45,32 +45,53 @@ GEOV_PRETRAINED_MODEL_ARCHIVE_LIST = [
 ]
 
 
-class GeoVPreTrainedModel(PreTrainedModel):
-    """
-    An abstract class to handle weights initialization and a simple interface for downloading and loading pretrained
-    models.
-    """
+class RotaryEmbedding(torch.nn.Module):
+    def __init__(self, dim, base=10000):
+        super().__init__()
+        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float() / dim))
+        self.register_buffer("inv_freq", inv_freq)
 
-    config_class = GeoVConfig
-    base_model_prefix = "geov"
-    supports_gradient_checkpointing = True
-    _no_split_modules = ["GeoVLayer"]
+        self.max_seq_len_cached = -1
 
-    def _init_weights(self, module):
-        """Initialize the weights"""
-        if isinstance(module, nn.Linear):
-            module.weight.data.normal_(mean=0.0, std=0.02)
-            if module.bias is not None:
-                module.bias.data.zero_()
-        elif isinstance(module, nn.Embedding):
-            module.weight.data.normal_(mean=0.0, std=0.02)
-        elif isinstance(module, nn.LayerNorm):
-            module.bias.data.zero_()
-            module.weight.data.fill_(1.0)
+    def forward(self, x, seq_len=None):
+        # x: [bs, num_attention_heads, seq_len, head_size]
+        # This `if` block is unlikely to be run after we build sin/cos in `__init__`. Keep the logic here just in case.
+        if seq_len > self.max_seq_len_cached:
+            self.max_seq_len_cached = seq_len
+            t = torch.arange(self.max_seq_len_cached, device=x.device, dtype=self.inv_freq.dtype)
+            freqs = torch.einsum("i,j->ij", t, self.inv_freq)
+            # Different from paper, but it uses a different permutation in order to obtain the same calculation
+            emb = torch.cat((freqs, freqs), dim=-1).to(x.device)
+            self.cos_cached = emb.cos()[None, None, :, :].to(x.dtype)
+            self.sin_cached = emb.sin()[None, None, :, :].to(x.dtype)
+        return self.cos_cached.to(x.device), self.sin_cached.to(x.device)
 
-    def _set_gradient_checkpointing(self, module, value=False):
-        if isinstance(module, GeoVModel):
-            module.gradient_checkpointing = value
+
+def rotate_half(x):
+    """Rotates half the hidden dims of the input."""
+    x1 = x[..., : x.shape[-1] // 2]
+    x2 = x[..., x.shape[-1] // 2:]
+    return torch.cat((-x2, x1), dim=-1)
+
+
+def apply_rotary_pos_emb(q, cos, sin, position_ids):
+    """Apply positional embeddings"""
+    gather_indices = position_ids[:, None, :, None]  # [bs, 1, seq_len, 1]
+    gather_indices = gather_indices.repeat(1, cos.shape[1], 1, cos.shape[3])
+    cos = torch.gather(cos.repeat(gather_indices.shape[0], 1, 1, 1), 2, gather_indices)
+    sin = torch.gather(sin.repeat(gather_indices.shape[0], 1, 1, 1), 2, gather_indices)
+    q_embed = (q * cos) + (rotate_half(q) * sin)
+    return q_embed
+
+
+def apply_rotary_pos_emb_reverse(q, cos, sin, position_ids):
+    """Apply positional embeddings in reverse"""
+    gather_indices = position_ids[:, None, :, None]  # [bs, 1, seq_len, 1]
+    gather_indices = gather_indices.repeat(1, cos.shape[1], 1, cos.shape[3])
+    cos = torch.gather(cos.repeat(gather_indices.shape[0], 1, 1, 1), 2, gather_indices)
+    sin = torch.gather(sin.repeat(gather_indices.shape[0], 1, 1, 1), 2, gather_indices)
+    q_embed = (q * cos) - (rotate_half(q) * sin)
+    return q_embed
 
 
 class GeoVAttention(nn.Module):
@@ -90,13 +111,14 @@ class GeoVAttention(nn.Module):
         self.dense = nn.Linear(config.hidden_size, config.hidden_size, bias=False)
 
     def forward(
-            self,
-            hidden_states: torch.FloatTensor,
-            attention_mask: torch.FloatTensor,
-            head_mask: Optional[torch.FloatTensor] = None,
-            layer_past: Optional[Tuple[torch.Tensor]] = None,
-            use_cache: Optional[bool] = False,
-            output_attentions: Optional[bool] = False,
+        self,
+        hidden_states: torch.FloatTensor,
+        attention_mask: torch.FloatTensor,
+        position_ids: torch.LongTensor,
+        head_mask: Optional[torch.FloatTensor] = None,
+        layer_past: Optional[Tuple[torch.Tensor]] = None,
+        use_cache: Optional[bool] = False,
+        output_attentions: Optional[bool] = False,
     ):
         has_layer_past = layer_past is not None
 
@@ -115,13 +137,12 @@ class GeoVAttention(nn.Module):
         seq_len = key.shape[-2]
         offset = 0
         if has_layer_past:
-            offset = layer_past[0].shape[-2]
-            seq_len += offset
+            seq_len += layer_past[0].shape[-2]
 
         cos, sin = self.rotary_emb(query, seq_len=seq_len)
-        query = apply_rotary_pos_emb(query, cos, sin, offset=offset)
-        key = apply_rotary_pos_emb(key, cos, sin, offset=offset)
-        value = apply_rotary_pos_emb(value, cos, sin, offset=offset)
+        query = apply_rotary_pos_emb(query, cos, sin, position_ids)
+        key = apply_rotary_pos_emb(key, cos, sin, position_ids)
+        value = apply_rotary_pos_emb(value, cos, sin, position_ids)
 
         # Cache QKV values
         if has_layer_past:
@@ -134,7 +155,7 @@ class GeoVAttention(nn.Module):
         # Compute attention
         attn_output, attn_weights = self._attn(query, key, value, attention_mask, head_mask)
 
-        attn_output = apply_rotary_pos_emb_reverse(attn_output, cos, sin, offset=offset)
+        attn_output = apply_rotary_pos_emb_reverse(attn_output, cos, sin, position_ids)
 
         # Reshape outputs
         attn_output = self._merge_heads(attn_output)
@@ -197,51 +218,6 @@ class GeoVAttention(nn.Module):
         return attn_output, attn_weights
 
 
-class RotaryEmbedding(torch.nn.Module):
-    def __init__(self, dim, base=10000):
-        super().__init__()
-        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float() / dim))
-        self.register_buffer("inv_freq", inv_freq)
-
-        self.max_seq_len_cached = -1
-
-    def forward(self, x, seq_len=None):
-        # x: [bs, num_attention_heads, seq_len, head_size]
-        # This `if` block is unlikely to be run after we build sin/cos in `__init__`. Keep the logic here just in case.
-        if seq_len > self.max_seq_len_cached:
-            self.max_seq_len_cached = seq_len
-            t = torch.arange(self.max_seq_len_cached, device=x.device, dtype=self.inv_freq.dtype)
-            freqs = torch.einsum("i,j->ij", t, self.inv_freq)
-            # Different from paper, but it uses a different permutation in order to obtain the same calculation
-            emb = torch.cat((freqs, freqs), dim=-1).to(x.device)
-            self.cos_cached = emb.cos()[None, None, :, :].to(x.dtype)
-            self.sin_cached = emb.sin()[None, None, :, :].to(x.dtype)
-        return self.cos_cached.to(x.device), self.sin_cached.to(x.device)
-
-
-def rotate_half(x):
-    """Rotates half the hidden dims of the input."""
-    x1 = x[..., : x.shape[-1] // 2]
-    x2 = x[..., x.shape[-1] // 2:]
-    return torch.cat((-x2, x1), dim=-1)
-
-
-def apply_rotary_pos_emb(q, cos, sin, offset: int = 0):
-    """Apply positional embeddings"""
-    cos = cos[..., offset: q.shape[-2] + offset, :]
-    sin = sin[..., offset: q.shape[-2] + offset, :]
-    q_embed = (q * cos) + (rotate_half(q) * sin)
-    return q_embed
-
-
-def apply_rotary_pos_emb_reverse(q, cos, sin, offset: int = 0):
-    """Apply positional embeddings in reverse"""
-    cos = cos[..., offset: q.shape[-2] + offset, :]
-    sin = sin[..., offset: q.shape[-2] + offset, :]
-    q_embed = (q * cos) - (rotate_half(q) * sin)
-    return q_embed
-
-
 class GeoVMLP(nn.Module):
     """Position wise Feed-forward network"""
 
@@ -256,9 +232,9 @@ class GeoVMLP(nn.Module):
     def forward(self, hidden_states):
         hidden_states = self.dense_h_to_4h(hidden_states)
         # Gated GELU
-        h1, h2 = torch.tensor_split(hidden_states, 2, dim=-1)
-        h1 = self.act(h1)
-        hidden_states = h1 * h2
+        gate, pass_through = torch.tensor_split(hidden_states, 2, dim=-1)
+        gate = self.act(gate)
+        hidden_states = gate * pass_through
 
         hidden_states = self.dense_2h_to_h(hidden_states)
         return hidden_states
@@ -275,17 +251,19 @@ class GeoVLayer(nn.Module):
         self.mlp = GeoVMLP(config)
 
     def forward(
-            self,
-            hidden_states: Optional[torch.FloatTensor],
-            attention_mask: Optional[torch.FloatTensor] = None,
-            head_mask: Optional[torch.FloatTensor] = None,
-            use_cache: Optional[bool] = False,
-            layer_past: Optional[Tuple[torch.Tensor]] = None,
-            output_attentions: Optional[bool] = False,
+        self,
+        hidden_states: Optional[torch.FloatTensor],
+        attention_mask: Optional[torch.FloatTensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        head_mask: Optional[torch.FloatTensor] = None,
+        use_cache: Optional[bool] = False,
+        layer_past: Optional[Tuple[torch.Tensor]] = None,
+        output_attentions: Optional[bool] = False,
     ):
         attention_layer_outputs = self.attention(
             self.input_layernorm(hidden_states),
             attention_mask=attention_mask,
+            position_ids=position_ids,
             layer_past=layer_past,
             head_mask=head_mask,
             use_cache=use_cache,
@@ -304,6 +282,25 @@ class GeoVLayer(nn.Module):
             outputs = (hidden_states,) + outputs[1:]  # hidden_states, (attn_weights)
 
         return outputs
+
+
+class GeoVPreTrainedModel(PreTrainedModel):
+    """
+    An abstract class to handle weights initialization and a simple interface for downloading and loading pretrained
+    models.
+    """
+
+    config_class = GeoVConfig
+    base_model_prefix = "geov"
+    supports_gradient_checkpointing = True
+    _no_split_modules = ["GeoVLayer"]
+
+    def _init_weights(self, module):
+        pass
+
+    def _set_gradient_checkpointing(self, module, value=False):
+        if isinstance(module, GeoVModel):
+            module.gradient_checkpointing = value
 
 
 GEOV_START_DOCSTRING = r"""
@@ -333,6 +330,11 @@ GEOV_INPUTS_DOCSTRING = r"""
             - 0 for tokens that are **masked**.
 
             [What are attention masks?](../glossary#attention-mask)
+        position_ids (`torch.LongTensor` of shape `({0})`, *optional*):
+            Indices of positions of each input sequence tokens in the position embeddings. Selected in the range `[0,
+            config.n_positions - 1]`.
+
+            [What are position IDs?](../glossary#position-ids)
         head_mask (`torch.FloatTensor` of shape `(num_heads,)` or `(num_layers, num_heads)`, *optional*):
             Mask to nullify selected heads of the self-attention modules. Mask values selected in `[0, 1]`:
 
@@ -345,7 +347,6 @@ GEOV_INPUTS_DOCSTRING = r"""
         use_cache (`bool`, *optional*):
             If set to `True`, `past_key_values` key value states are returned and can be used to speed up decoding (see
             `past_key_values`).
-
         inputs_embeds (`torch.FloatTensor` of shape `(batch_size, seq_len, hidden_size)`, *optional*):
             Optionally, instead of passing `input_ids` you can choose to directly pass an embedded representation. This
             is useful if you want more control over how to convert *input_ids* indices into associated vectors than the
@@ -399,6 +400,7 @@ class GeoVModel(GeoVPreTrainedModel):
             self,
             input_ids: Optional[torch.LongTensor] = None,
             attention_mask: Optional[torch.FloatTensor] = None,
+            position_ids: Optional[torch.LongTensor] = None,
             head_mask: Optional[torch.FloatTensor] = None,
             inputs_embeds: Optional[torch.FloatTensor] = None,
             past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
@@ -426,7 +428,17 @@ class GeoVModel(GeoVPreTrainedModel):
         batch_size, seq_length = input_shape
 
         if past_key_values is None:
+            past_length = 0
             past_key_values = tuple([None] * self.config.num_hidden_layers)
+        else:
+            past_length = past_key_values[0][0].size(-2)
+
+        if position_ids is None:
+            device = input_ids.device if input_ids is not None else inputs_embeds.device
+            position_ids = torch.arange(past_length, seq_length + past_length, dtype=torch.long, device=device)
+            position_ids = position_ids.unsqueeze(0).view(-1, seq_length)
+        else:
+            position_ids = position_ids.view(-1, seq_length).long()
 
         # Attention mask.
         if attention_mask is not None:
@@ -486,12 +498,14 @@ class GeoVModel(GeoVPreTrainedModel):
                     create_custom_forward(layer),
                     hidden_states,
                     attention_mask,
+                    position_ids,
                     head_mask[i],
                 )
             else:
                 outputs = layer(
                     hidden_states,
                     attention_mask=attention_mask,
+                    position_ids=position_ids,
                     head_mask=head_mask[i],
                     layer_past=layer_past,
                     use_cache=use_cache,
@@ -503,6 +517,7 @@ class GeoVModel(GeoVPreTrainedModel):
             if output_attentions:
                 all_attentions = all_attentions + (outputs[2 if use_cache else 1],)
 
+        # Cast the hidden state to final layer norm data type (this is the modification from GPTNeoX)
         hidden_states = self.final_layer_norm(hidden_states.to(self.final_layer_norm.weight.dtype))
         # Add last hidden state
         if output_hidden_states:
@@ -546,6 +561,7 @@ class GeoVForCausalLM(GeoVPreTrainedModel):
             self,
             input_ids: Optional[torch.LongTensor] = None,
             attention_mask: Optional[torch.FloatTensor] = None,
+            position_ids: Optional[torch.LongTensor] = None,
             inputs_embeds: Optional[torch.FloatTensor] = None,
             head_mask: Optional[torch.FloatTensor] = None,
             past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
@@ -582,6 +598,7 @@ class GeoVForCausalLM(GeoVPreTrainedModel):
         outputs = self.geov(
             input_ids,
             attention_mask=attention_mask,
+            position_ids=position_ids,
             head_mask=head_mask,
             inputs_embeds=inputs_embeds,
             past_key_values=past_key_values,
@@ -614,20 +631,29 @@ class GeoVForCausalLM(GeoVPreTrainedModel):
             attentions=outputs.attentions,
         )
 
-    def prepare_inputs_for_generation(self, input_ids, past_key_values=None, attention_mask=None, **model_kwargs):
+    def prepare_inputs_for_generation(self, input_ids, past_key_values=None, attention_mask=None, **kwargs):
         input_shape = input_ids.shape
-
-        # if model is used as a decoder in encoder-decoder model, the decoder attention mask is created on the fly
-        if attention_mask is None:
-            attention_mask = input_ids.new_ones(input_shape)
 
         # cut decoder_input_ids if past is used
         if past_key_values and past_key_values[0] is not None:
             input_ids = input_ids[:, -1:]
 
+        position_ids = kwargs.get("position_ids", None)
+        if attention_mask is not None and position_ids is None:
+            # create position_ids on the fly for batch generation
+            position_ids = attention_mask.long().cumsum(-1) - 1
+            position_ids.masked_fill_(attention_mask == 0, 1)
+            if past_key_values:
+                position_ids = position_ids[:, -1].unsqueeze(-1)
+
+        # if model is used as a decoder in encoder-decoder model, the decoder attention mask is created on the fly
+        if attention_mask is None:
+            attention_mask = input_ids.new_ones(input_shape)
+
         return {
             "input_ids": input_ids,
             "attention_mask": attention_mask,
+            "position_ids": position_ids,
             "past_key_values": past_key_values,
         }
 
