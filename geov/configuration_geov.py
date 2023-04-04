@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """ GeoV model configuration"""
-from geov import GeoVTokenizer
+import geov.tokenization_geov
 from transformers.configuration_utils import PretrainedConfig
 from transformers.utils import logging
 
@@ -74,7 +74,7 @@ class GeoVConfig(PretrainedConfig):
     >>> configuration = model.config  # doctest: +SKIP
     ```"""
     model_type = "geov"
-    tokenizer_class = GeoVTokenizer
+    tokenizer_class = geov.tokenization_geov.GeoVTokenizer
 
     def __init__(
             self,
