@@ -89,10 +89,15 @@ class GeoVConfig(PretrainedConfig):
             bos_token_id=0,
             eos_token_id=2,
             tie_word_embeddings=False,
+            tokenizer_class="GeoVTokenizer",
             **kwargs,
     ):
         super().__init__(
-            bos_token_id=bos_token_id, eos_token_id=eos_token_id, tie_word_embeddings=tie_word_embeddings, **kwargs
+            bos_token_id=bos_token_id,
+            eos_token_id=eos_token_id,
+            tie_word_embeddings=tie_word_embeddings,
+            tokenizer_class=tokenizer_class,
+            **kwargs
         )
         self.vocab_size = vocab_size
         self.max_position_embeddings = max_position_embeddings
