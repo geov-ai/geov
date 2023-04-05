@@ -4,12 +4,12 @@
 
 ## Overview
 
-The GeoV model was designed by Georges Harik and uses 
-[Rotary Positional Embeddings with Relative distances (RoPER)](http://research.labml.ai/RoPER.html) 
+The GeoV model was designed by Georges Harik and uses
+[Rotary Positional Embeddings with Relative distances (RoPER)](http://research.labml.ai/RoPER.html)
 by [Georges Hark](https://twitter.com/ghark) and [Varuna Jayasiri](https://twitter.com/vpj).
 
 [RoPER](http://research.labml.ai/RoPER.html), in addition to using relative positions in the attention score
-calculation by RoPE embeddings, adds relative positional information explicitly to value embeddings. 
+calculation by RoPE embeddings, adds relative positional information explicitly to value embeddings.
 Specifically, it incorporates the relative positions of the tokens paid attention to.
 RoPER has given better performance in some algorithmic tasks, and seems comparable to RoPE in language modeling.
 
@@ -37,6 +37,15 @@ pip install geov
 ## Generation
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/geov-ai/geov/blob/master/notebooks/generate.ipynb)
+
+## Results
+
+These are results from [EleutherAI/lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) tests at
+different checkpoints.
+We will keep updating these as the training progresses.
+
+* [74B](results.074B.md)
+* [80B](results.080B.md)
 
 ```python
 from geov import GeoVForCausalLM, GeoVTokenizer

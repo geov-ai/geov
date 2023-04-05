@@ -1,3 +1,5 @@
+## [EleutherAI/lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) results at [74B tokens trained](https://huggingface.co/GeoV/GeoV-9b/tree/74B)
+
 |     Task     |Version| Metric | Value |   |Stderr|
 |--------------|------:|--------|------:|---|-----:|
 |anli_r1       |      0|acc     | 0.3370|±  |0.0150|
