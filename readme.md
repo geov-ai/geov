@@ -46,6 +46,8 @@ We will keep updating these as the training progresses.
 
 * [74B](results.074B.md)
 * [80B](results.080B.md)
+* [98B](results.098B.md)
+* [117B](results.117B.md)
 
 ```python
 from geov import GeoVForCausalLM, GeoVTokenizer
